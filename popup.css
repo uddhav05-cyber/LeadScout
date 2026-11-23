@@ -309,3 +309,6 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+.research-diagnostics { min-width: 190px; max-width: 360px; line-height: 1.5; }
+.res-table td .btn { display: block; margin-top: 5px; white-space: nowrap; }

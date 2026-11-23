@@ -3,6 +3,8 @@
 import { DEFAULT_SETTINGS, parseInputs, buildTSV, buildCSV, fmtEta } from './lib/parse.js';
 import { extractLinkedInCompany } from './lib/extract.js';
 
+import { researchSummary } from './lib/research-diagnostics.js';
+
 const $ = (id) => document.getElementById(id);
 
 let settings = { ...DEFAULT_SETTINGS, keys: { ...DEFAULT_SETTINGS.keys } };
@@ -270,10 +272,10 @@ function renderResults(force) {
 
   let doneN = 0, peopleN = 0;
   for (const c of job.results) {
-    if (c.status === 'done') doneN++;
+    if (c.status === 'done' || c.status === 'failed') doneN++;
     peopleN += (c.people || []).length;
   }
-  const key = doneN + '|' + peopleN + '|' + (job.finishedAt || 0);
+  const key = (job.results || []).length + '|' + (job.cursor || 0) + '|' + doneN + '|' + peopleN + '|' + (job.finishedAt || 0);
   if (!force && key === lastResultsKey) return;
   lastResultsKey = key;
 
@@ -290,7 +292,7 @@ function renderResults(force) {
 
     if (r.kind === 'review') {
       tr.appendChild(tdText('—', 'ds'));
-      tr.appendChild(tdText('No decision-makers found — needs manual review', 'ds'));
+      tr.appendChild(tdText(researchSummary(r.comp), 'ds research-diagnostics'));
       tr.appendChild(tdText(r.comp.name || r.comp.input, 'co'));
       const tdL = document.createElement('td');
       if (r.comp.url) tdL.appendChild(linkEl(r.comp.url, 'page'));

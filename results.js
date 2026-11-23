@@ -2,10 +2,12 @@
 
 import { DEFAULT_SETTINGS, buildTSV, buildCSV, fmtEta } from './lib/parse.js';
 
+import { researchSummary } from './lib/research-diagnostics.js';
+
 const $ = (id) => document.getElementById(id);
 
 let job = null;
-const ui = { filter: 'all', search: '', pollTimer: null };
+const ui = { filter: 'all', search: '' };
 
 function toast(msg, ms = 1800) {
   const t = $('toast');
@@ -105,13 +107,13 @@ function linkEl(href, txt) {
 let lastKey = '';
 
 function render(force) {
-  if (!job) return;
+  if (!job) { $('resBody').replaceChildren(); lastKey = ''; return; }
   let doneN = 0, peopleN = 0;
   for (const c of (job.results || [])) {
-    if (c.status === 'done') doneN++;
+    if (c.status === 'done' || c.status === 'failed') doneN++;
     peopleN += (c.people || []).length;
   }
-  const key = doneN + '|' + peopleN + '|' + (job.running ? 'r' : '') + (job.paused ? 'p' : '') + (job.finishedAt || 0);
+  const key = (job.results || []).length + '|' + (job.cursor || 0) + '|' + doneN + '|' + peopleN + '|' + (job.running ? 'r' : '') + (job.paused ? 'p' : '') + (job.finishedAt || 0);
   if (!force && key === lastKey) return;
   lastKey = key;
 
@@ -135,18 +137,24 @@ function render(force) {
 
     if (r.kind === 'review') {
       tr.appendChild(tdText('—', 'ds'));
-      tr.appendChild(tdText('No decision-makers found — needs manual review', 'ds'));
+      tr.appendChild(tdText(researchSummary(r.comp), 'ds research-diagnostics'));
       tr.appendChild(tdText(r.comp.country || '', 'ds'));
       tr.appendChild(tdText(r.comp.name || r.comp.input, 'co'));
-      tr.appendChild(tdText(r.comp.size || '', 'ds'));
+      tr.appendChild(tdText(displaySize(r.comp), 'ds'));
       tr.appendChild(tdText(r.comp.industry || '', 'ds'));
-      const tdL = document.createElement('td');
-      if (r.comp.url) tdL.appendChild(linkEl(r.comp.url, 'page'));
-      else tdL.appendChild(document.createTextNode('—'));
-      tr.appendChild(tdL);
+      tr.appendChild(tdText('—'));
+      tr.appendChild(companyPageCell(r.comp));
       tr.appendChild(tdText('', ''));
       const tdF = document.createElement('td');
-      tdF.appendChild(pillEl('u', 'REVIEW'));
+      tdF.appendChild(pillEl('u', r.comp.status === 'working' ? 'RUNNING' : 'REVIEW'));
+      if (!job.running && !job.paused) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn ghost small';
+        retry.textContent = r.comp.url ? 'Retry' : 'Retry with URL';
+        retry.addEventListener('click', () => retryCompany(r.comp, retry));
+        tdF.appendChild(retry);
+      }
       tr.appendChild(tdF);
       frag.appendChild(tr);
       continue;
@@ -165,13 +173,14 @@ function render(force) {
 
     tr.appendChild(tdText(c.country || '', 'ds'));
     tr.appendChild(tdText(c.name || c.input, 'co'));
-    tr.appendChild(tdText(c.size || '', 'ds'));
+    tr.appendChild(tdText(displaySize(c), 'ds'));
     tr.appendChild(tdText(c.industry || '', 'ds'));
 
     const tdL = document.createElement('td');
     if (p.url) tdL.appendChild(linkEl(p.url, 'profile'));
     else tdL.appendChild(document.createTextNode('—'));
     tr.appendChild(tdL);
+    tr.appendChild(companyPageCell(c));
 
     const tdE = document.createElement('td');
     tdE.className = 'est-mail';
@@ -213,20 +222,31 @@ function render(force) {
     : '';
 }
 
-function startPolling() {
-  if (ui.pollTimer) return;
-  ui.pollTimer = setInterval(async () => {
-    const st = await chrome.storage.local.get(['job']);
-    job = st.job || job;
-    render(false);
-    // v1.4: keep live while running OR paused — a resume elsewhere must not
-    // leave this page dead
-    if (!job || (!job.running && !job.paused)) stopPolling();
-  }, 1500);
+function displaySize(company) {
+  return company.sizeSource ? company.size : (company.size ? 'Unverified' : '');
 }
 
-function stopPolling() {
-  if (ui.pollTimer) { clearInterval(ui.pollTimer); ui.pollTimer = null; }
+function companyPageCell(company) {
+  const td = document.createElement('td');
+  if (company.url) td.appendChild(linkEl(company.url, 'Company page'));
+  else td.textContent = '—';
+  return td;
+}
+
+async function retryCompany(company, button) {
+  const url = company.url ? '' : window.prompt('Enter the direct LinkedIn company URL for ' +
+    (company.name || company.input));
+  if (url === null || (!company.url && !url.trim())) return;
+  button.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'retryCompany', id: company.id, url: url.trim() });
+    if (!response?.ok) throw new Error(response?.error || 'The extension could not start the retry.');
+    toast('Company queued');
+  } catch (error) {
+    toast(error.message, 3500);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function exportTargets() {
@@ -284,7 +304,11 @@ async function init() {
   job = st.job || null;
   render();
   wire();
-  if (job && (job.running || job.paused)) startPolling();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.job) return;
+    job = changes.job.newValue || null;
+    render();
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
